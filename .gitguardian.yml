@@ -1,0 +1,11 @@
+# GitGuardian ggshield configuration — https://docs.gitguardian.com/ggshield-docs/reference/config
+# Scans every commit/PR for secrets and known leak patterns. Requires a GITGUARDIAN_API_KEY repo
+# secret to actually run in CI (see .github/workflows/secret-scan.yml) — this file configures
+# *behavior* once that's wired up; it does not itself perform any scanning on its own.
+version: 2
+secret:
+  # Fail the scan (non-zero exit) on any real secret hit — never a soft warning for this repo.
+  show-secrets: false
+  ignored-paths:
+    - "node_modules/**"
+    - "public/fonts/**"

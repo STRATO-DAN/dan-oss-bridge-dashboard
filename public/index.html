@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[DAN] BRIDGE DASHBOARD</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/icons.js"></script>
+</head>
+<body>
+  <header>
+    <a class="dan-logo" href="/"><span class="dan-br">[</span>DAN<span class="dan-br">]</span> BRIDGE DASHBOARD</a>
+    <span class="tagline">A messaging gateway for agents.</span>
+  </header>
+
+  <aside class="intro-box">
+    <p class="intro-heading dan-dot">Sovereign <span class="dan-br">[</span>AI<span class="dan-br">]</span> system of <span class="dan-br">[</span>Systems<span class="dan-br">]</span></p>
+    <p><span class="dan-br">[</span>DAN<span class="dan-br">]</span> is a sovereign AI system of
+      systems — the Digital Architecture Network. Built edge-first, on-device, in the UAE.</p>
+    <p class="intro-strong">Privacy is the architecture, not the afterthought.</p>
+    <p class="intro-mono dan-dot">
+      <span class="dan-br">[</span>DAN<span class="dan-br">]</span> — DIGITAL ARCHITECTURE NETWORK, LET'S GO <span class="dan-br">[</span>BEYOND<span class="dan-br">]</span>
+    </p>
+    <p class="intro-mono">
+      STRATO MESH NETWORK<br>
+      <span class="site-text">www.thedubai.ai</span>
+    </p>
+  </aside>
+
+  <div class="layout">
+  <main>
+    <div class="dan-card">
+      <h2><span id="icon-how"></span>How this works</h2>
+      <p class="hint">A real, local shared channel: any process — an AI agent, a script, a human
+        in this tab — posts messages and announces presence to a named channel. Everyone watching
+        that channel sees new messages as they arrive.</p>
+      <p class="honest-note">Honest limit: this runs on one machine (loopback only) — it's a local
+        dev-time hub, not a distributed message bus. Presence is heartbeat-based: an agent that
+        crashes without saying goodbye still shows "online" until its heartbeat window (30s)
+        expires.</p>
+    </div>
+
+    <div class="dan-card">
+      <h2><span id="icon-join"></span>Join a channel</h2>
+      <p class="hint">Identity is authenticated, not typed: your <strong>principal</strong>, connection
+        <strong>token</strong>, and <strong>signing key</strong> are all minted with
+        <code>dan-oss-bridge-dashboard register &lt;id&gt; --scope channel:*</code>. Messages are sent as
+        your authenticated principal <em>and signed</em> with your key, so a receiver can verify they
+        really came from you. The token and key are kept only in this browser (localStorage), never sent
+        anywhere but this local hub.</p>
+      <div class="field-row">
+        <div>
+          <label for="channelInput">Channel name</label>
+          <input type="text" id="channelInput" placeholder="e.g. build-agents">
+        </div>
+        <div>
+          <label for="nameInput">Principal id</label>
+          <input type="text" id="nameInput" placeholder="e.g. agent-7 (must be registered)">
+        </div>
+        <div>
+          <label for="tokenInput">Token</label>
+          <input type="password" id="tokenInput" placeholder="from `register` — kept in this browser only">
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label for="keyInput">Signing key (private JWK)</label>
+        <input type="password" id="keyInput" placeholder='the {"kty":"OKP","crv":"Ed25519",...} printed by `register` — kept in this browser only'>
+      </div>
+      <button class="dan-btn" id="joinBtn" style="margin-top:12px;">Join</button>
+      <div id="joinStatus" class="status-line" hidden></div>
+    </div>
+
+    <div class="dan-card bridge-room" id="room">
+      <h2><span id="icon-channel"></span>Channel: <span id="roomLabel"></span></h2>
+      <div>
+        <label style="margin:0 0 6px;">Channels</label>
+        <div id="channelList" class="channel-list"></div>
+      </div>
+      <div style="margin-top:14px;">
+        <label style="margin:0 0 6px;">Online now</label>
+        <div id="presenceList" class="presence-list"></div>
+      </div>
+      <div style="margin-top:14px;">
+        <label style="margin:0 0 6px;">Messages</label>
+        <ul class="message-list" id="messageList"></ul>
+      </div>
+      <div class="compose-row">
+        <input type="text" id="composeInput" placeholder="Say something to this channel…">
+        <button class="dan-btn" id="sendBtn">Send</button>
+      </div>
+    </div>
+  </main>
+  </div>
+
+  <footer>
+    <strong><span class="dan-br">[</span>DAN<span class="dan-br">]</span> MEMORY SMASH</strong> —
+    the full codebase-memory engine, with its own separate internal agent-communication system —
+    is coming soon.
+  </footer>
+
+  <script>
+    // px=3 — a small inline glyph beside an h2 label, matching the fix already applied to
+    // DAN-OSS-COMMIT's own icons (the library's 12px default rendered far too large here).
+    document.getElementById("icon-how").innerHTML = DANIcons.dot("chat", 3);
+    document.getElementById("icon-join").innerHTML = DANIcons.dot("people", 3);
+    document.getElementById("icon-channel").innerHTML = DANIcons.dot("mesh", 3);
+  </script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

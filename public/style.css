@@ -1,0 +1,172 @@
+/* [DAN] BRIDGE DASHBOARD — same real, proven brand foundation as the other DAN-OSS tools. Copied
+   deliberately, not cross-repo-linked (each DAN-OSS tool stays independent per the dispatch). */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/JetBrainsMono-latin.woff2") format("woff2");
+  font-weight: 100 800; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Doto";
+  src: url("fonts/Doto-latin.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* native controls (number spinners, <select> arrow, scrollbars) follow the theme */
+  color-scheme: light dark;
+  --dan-red: #f25b4f;
+  --dan-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Text",
+    "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", system-ui, sans-serif;
+  --dan-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono",
+    Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --dan-dot: "Doto", "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas,
+    "DejaVu Sans Mono", monospace;
+  --dan-bg: #f5f5f3; --dan-bg-2: #ffffff; --dan-text: #16161a;
+  --dan-border: rgba(0, 0, 0, 0.12); --dan-border-2: rgba(0, 0, 0, 0.2);
+  --dan-btn-text: #ffffff; --dan-ok: #2e9e56;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dan-bg: #1b1b1f; --dan-bg-2: #232329; --dan-text: #f5f5f7;
+    --dan-border: rgba(255, 255, 255, 0.12); --dan-border-2: rgba(255, 255, 255, 0.2);
+    --dan-btn-text: #0e0e11; --dan-ok: #3ecb72;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+* { scrollbar-color: var(--dan-text) var(--dan-bg-2); scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--dan-bg-2); }
+*::-webkit-scrollbar-thumb { background: var(--dan-text); border-radius: 6px; border: 2px solid var(--dan-bg-2); }
+body {
+  background: var(--dan-bg); color: var(--dan-text); font-family: var(--dan-font);
+  line-height: 1.45; -webkit-font-smoothing: antialiased;
+  display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh;
+}
+
+.dan-br { color: var(--dan-red); }
+.dan-logo { font-family: var(--dan-mono); font-weight: 800; font-size: 22px; letter-spacing: 0.02em; color: var(--dan-text); text-decoration: none; }
+.dan-logo .dan-br { margin: 0 0.1em; }
+
+header {
+  height: 54px; box-sizing: border-box; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--dan-border); flex-shrink: 0;
+}
+header .tagline { font-size: 12.5px; font-weight: 600; }
+
+.layout { padding: 16px 20px; min-height: 0; }
+
+.intro-box {
+  position: fixed; left: 16px; top: 86px; bottom: 16px; width: 352px; overflow-y: auto;
+  border: 1px solid var(--dan-red); border-radius: 14px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.07);
+  padding: 22px; background: color-mix(in srgb, var(--dan-red) 7%, var(--dan-bg-2));
+  font-size: 12.5px; line-height: 1.55;
+}
+.intro-box p { margin: 0 0 12px; }
+.intro-box p:last-child { margin-bottom: 0; }
+.intro-heading { font-weight: 700; letter-spacing: 0.015em; font-size: 11.5px; white-space: nowrap; }
+.intro-strong { font-weight: 700; }
+.intro-mono { font-family: var(--dan-mono); font-size: 11px; letter-spacing: 0.02em; }
+.intro-mono.dan-dot { font-size: 9.5px; letter-spacing: 0.01em; white-space: nowrap; }
+.site-text { color: var(--dan-text); }
+@media (max-width: 940px) { .intro-box { display: none; } }
+
+.dan-dot { font-family: var(--dan-dot); font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: var(--dan-text); }
+.dan-dot .dan-br { margin: 0 0.05em; }
+
+main { max-width: 760px; margin: 0 auto; }
+
+.dan-card {
+  background: var(--dan-bg-2); border: 1px solid var(--dan-border); border-radius: 14px;
+  padding: 14px 16px; margin-bottom: 12px;
+}
+
+.dan-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  background: var(--dan-red); color: #1b1b20; font-family: var(--dan-font);
+  font-size: 14px; font-weight: 600; padding: 12px 20px; border-radius: 10px;
+  text-decoration: none; border: 0; cursor: pointer; transition: opacity 0.2s, transform 0.2s;
+}
+.dan-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+.dan-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+h2 {
+  font-size: 14px; font-weight: 700; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* Dot-matrix icon grid — matches the brand pack's own `.dan-idg`/`.dan-idp` render shape
+   (dan-icons.js's `dot()`), same pixel-cell technique, ported into public/icons.js above. */
+.dan-idg { display: inline-grid; vertical-align: middle; }
+.dan-idp { border-radius: 50%; display: block; }
+.hint { font-size: 13.5px; font-weight: 500; }
+.honest-note { font-size: 12.5px; font-weight: 500; padding: 10px 12px; border: 1px solid var(--dan-border-2); border-radius: 10px; margin-top: 10px; }
+
+label { display: block; font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin: 12px 0 6px; }
+label:first-child { margin-top: 0; }
+
+input[type="text"] {
+  width: 100%; font-family: var(--dan-mono); font-size: 13px;
+  background: var(--dan-bg); color: var(--dan-text); border: 1px solid var(--dan-border);
+  border-radius: 10px; padding: 10px 12px;
+}
+input:focus { outline: none; border-color: var(--dan-red); }
+
+.field-row { display: flex; gap: 10px; }
+.field-row > div { flex: 1; }
+
+.status-line { font-family: var(--dan-mono); font-size: 12.5px; margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--dan-border); white-space: pre-wrap; }
+.status-line.ok { border-color: var(--dan-ok); color: var(--dan-ok); }
+.status-line.err { border-color: var(--dan-red); color: var(--dan-red); }
+
+.bridge-room { display: none; }
+.bridge-room.active { display: block; }
+
+.presence-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.presence-pill {
+  font-family: var(--dan-mono); font-size: 11px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--dan-ok); color: var(--dan-ok);
+}
+.presence-empty { font-size: 12.5px; }
+
+/* Item 4: small green online dot — reuses --dan-ok so it stays legible on both the light (#2e9e56)
+   and dark (#3ecb72) grounds, where the brand --lime (#b9df65) would wash out on white. */
+.presence-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%; vertical-align: middle;
+  margin-right: 6px; background: var(--dan-ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dan-ok) 22%, transparent);
+}
+
+/* Item 2: channel switcher list. The active channel gets a coral left-border + coral text, the
+   same brand accent the primary buttons use. */
+.channel-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.channel-item {
+  font-family: var(--dan-mono); font-size: 11px; padding: 4px 10px 4px 8px; cursor: pointer;
+  border-radius: 8px; background: var(--dan-bg); color: var(--dan-text);
+  border: 1px solid var(--dan-border); border-left: 3px solid transparent;
+  transition: border-color 0.15s, color 0.15s;
+}
+.channel-item:hover { border-color: var(--dan-border-2); }
+.channel-item.active { border-color: var(--dan-red); border-left-color: var(--dan-red); color: var(--dan-red); }
+
+.message-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.message-row { padding: 8px 0; border-top: 1px solid var(--dan-border); font-size: 13.5px; }
+.message-row:first-child { border-top: none; }
+.message-from { font-family: var(--dan-mono); font-weight: 700; font-size: 12px; }
+.message-meta { font-size: 11px; margin-left: 6px; }
+.message-text { margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+.empty-note { font-size: 13px; padding: 10px 0; }
+
+.compose-row { display: flex; gap: 8px; margin-top: 10px; }
+.compose-row input { flex: 1; }
+
+footer { padding: 20px 20px 40px; border-top: 1px solid var(--dan-border); font-size: 12.5px; font-weight: 500; }
+footer a { color: var(--dan-red); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+
+@media (min-width: 941px) {
+  .layout { margin-left: 392px; }
+  footer { margin-left: 392px; }
+}

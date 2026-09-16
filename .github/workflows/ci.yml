@@ -1,0 +1,26 @@
+name: CI
+
+# Enterprise-standard CI: run the real test suite on every push to main and every PR, across the
+# supported Node versions. Mirrors the "tests run in CI" convention of Cloudflare's own OSS repos.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # These tools are zero-install by design (Node's built-in test runner), so CI proves that
+      # promise directly: no `npm ci`, just the tests.
+      - name: Run tests
+        run: npm test
