@@ -1,0 +1,35 @@
+name: PR attribution guard
+
+# A local commit-msg hook cannot see a PR title/description (those are set through the GitHub API,
+# not `git commit`), so this guard runs in CI: it fails the PR if its title or body carries an
+# AI-attribution line. Same pattern as scripts/check-commit-msg.sh, extended to PR metadata.
+#
+# NOTE: for `pull_request` events GitHub runs the workflow definition from the BASE branch, so this
+# guard only starts protecting PRs once it is merged to the default branch.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  no-ai-attribution:
+    name: no AI-attribution in PR title/body
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject an AI signature in the PR title or description
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          AI_SIGNATURE_PATTERN='Co-Authored-By:.*Claude|Co-authored-by:.*Claude|Generated with \[Claude|🤖 Generated with|Generated with Claude Code'
+          printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" > pr_meta.txt
+          hit=$(grep -nEi "$AI_SIGNATURE_PATTERN" pr_meta.txt || true)
+          if [ -n "$hit" ]; then
+            echo "::error::PR title/description contains an AI-attribution line — blocked."
+            echo "$hit" | sed 's/^/    /'
+            echo "Remove the AI signature from the PR title/description, then update the PR."
+            exit 1
+          fi
+          echo "OK — no AI-attribution line in the PR title/description."
