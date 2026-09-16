@@ -27,6 +27,7 @@ export class BridgeStore {
     this.dataDir = dataDir;
     this.file = path.join(dataDir, "channels.json");
     this.lockFile = path.join(dataDir, "hub.lock");
+    this.nonceFile = path.join(dataDir, "nonces.json"); // used nonces persist here so replay protection survives a restart
     // Production default is MAX_MESSAGES_PER_CHANNEL; overridable so tests can exercise retention and
     // the history-gap path without posting thousands of messages.
     this.maxMessages = Number.isInteger(opts.maxMessagesPerChannel) && opts.maxMessagesPerChannel > 0
@@ -56,6 +57,21 @@ export class BridgeStore {
     } catch {
       // No saved state yet (or unreadable) — start empty rather than fail. A corrupt file does not
       // grant anyone authority; identity/authz live in principals.json, checked by the server.
+    }
+    // Restore the used-nonce set so replay protection SURVIVES a restart. Before this, `_nonces` was
+    // purely in-memory: after a bounce, a message captured within the freshness window (ts-skew) could be
+    // replayed because its nonce was "never heard of." We reload the still-live nonces (expired ones are
+    // dropped on load — they'd be rejected as STALE by the ts window anyway) so a used nonce stays used.
+    try {
+      const now = Date.now();
+      const saved = JSON.parse(await fs.readFile(this.nonceFile, "utf8"));
+      if (Array.isArray(saved)) {
+        for (const [nonce, exp] of saved) {
+          if (typeof nonce === "string" && Number.isFinite(exp) && exp > now) this._nonces.set(nonce, exp);
+        }
+      }
+    } catch {
+      /* no saved nonces yet (or unreadable) — start with an empty set */
     }
   }
 
@@ -104,6 +120,18 @@ export class BridgeStore {
     const tmp = `${this.file}.${randomUUID()}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(plain), "utf8");
     await fs.rename(tmp, this.file);
+    await this.#persistNonces();
+  }
+
+  // Persist the still-live used-nonce set (expired entries dropped) so replay protection survives a
+  // restart. Atomic write-then-rename, same as channels.json.
+  async #persistNonces() {
+    const now = Date.now();
+    const live = [];
+    for (const [nonce, exp] of this._nonces) if (exp > now) live.push([nonce, exp]);
+    const tmp = `${this.nonceFile}.${randomUUID()}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(live), "utf8");
+    await fs.rename(tmp, this.nonceFile);
   }
 
   #channel(name, { create } = { create: true }) {

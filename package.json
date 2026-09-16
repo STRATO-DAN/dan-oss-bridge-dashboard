@@ -1,6 +1,6 @@
 {
   "name": "@strato-dan/bridge-dashboard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "[DAN] BRIDGE DASHBOARD — a real, local messaging gateway for AI agents (and anything else): post, read, and watch shared channels, see who's present. Zero runtime dependencies.",
   "license": "MIT",
   "type": "module",
