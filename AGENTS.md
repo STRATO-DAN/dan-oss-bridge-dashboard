@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Context for AI coding assistants (Claude, Copilot, Cursor, etc.) working in any repository under
+Context for AI coding assistants working in any repository under
 the [STRATO-DAN](https://github.com/STRATO-DAN) organization that doesn't have its own `AGENTS.md`.
 
 ## What these repos are
@@ -37,7 +37,7 @@ build step, no framework, no shared codebase between tools.
     explain the *reasoning* in a way a stranger with zero internal context could follow — not a
     pointer to an internal ticket they can't see.
   - **Never add an AI-attribution line to a commit or PR in these repos** (`Co-Authored-By:
-    Claude`, "Generated with Claude Code", or similar) — this is a real, standing, deliberately
+    a tool`, "Generated with a coding tool", or similar) — this is a real, standing, deliberately
     enforced rule for this org, not an oversight if it's missing. The `commit-msg` hook blocks
     it the same way it blocks an internal identifier.
 - **Test what you change.** If a change is claimed to work, it should have actually been run —
