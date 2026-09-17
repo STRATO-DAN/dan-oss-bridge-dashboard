@@ -13,7 +13,8 @@ import { BridgeStore, BridgeError } from "./store.js";
 import { AuthStore, mayUseChannel } from "./auth.js";
 import { Audit } from "./audit.js";
 import { RateLimiter } from "./ratelimit.js";
-import { canonicalMessage, verifySignature } from "./sign.js";
+import { canonicalMessage, verifySignature, verifyMessage } from "./sign.js";
+import { verifyChain } from "./chain.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -220,6 +221,40 @@ export function createServer(cfg = {}) {
             ...(result.gap ? { gap: true, reason: "HISTORY_GAP" } : {}),
           });
         }
+      }
+
+      // Whole-channel integrity audit: walk the retained log and report, per message, whether its
+      // Ed25519 signature verifies AND whether its hash-chain link is intact — plus a channel-level
+      // verdict and the first broken message id. Read-only; authenticated + scoped like every route.
+      // This is the data the dashboard's "verify log integrity" panel renders.
+      const verifyMatch = p.match(/^\/api\/channels\/([^/]+)\/verify$/);
+      if (verifyMatch && CHANNEL_RE.test(verifyMatch[1]) && req.method === "GET") {
+        const channel = verifyMatch[1];
+        if (!mayUseChannel(subject, channel)) {
+          audit.record({ op: "verify", result: "deny", principal: subject.id, channel, reason: "forbidden_channel" });
+          return sendJson(res, 403, { ok: false, reason: `principal ${subject.id} is not authorized for channel ${channel}` });
+        }
+        const read = store.readMessages(channel, 0); // all retained messages, oldest-first
+        const msgs = read.messages;
+        const { chainPresent, firstBreakId, verdicts } = verifyChain(msgs);
+        let sigForged = 0, sigUnverifiable = 0;
+        const records = msgs.map((m, i) => {
+          const publicKey = auth.getPublicKey(m.from);
+          // A message whose sender has no registered key can't be authenticated by this hub — report it
+          // honestly as unverifiable rather than silently "ok" or falsely "forged".
+          const sigVerified = publicKey ? verifyMessage(m, channel, publicKey) : null;
+          if (sigVerified === false) sigForged++;
+          else if (sigVerified === null) sigUnverifiable++;
+          return { id: m.id, from: m.from, ts: m.ts, sigVerified, chainOk: verdicts[i].chainOk };
+        });
+        const chainIntact = chainPresent ? firstBreakId === null : null;
+        return sendJson(res, 200, {
+          ok: true, channel,
+          chainPresent, chainIntact, firstBreakId,
+          minRetainedId: read.minRetainedId, latestId: read.latestId,
+          counts: { total: records.length, sigForged, sigUnverifiable },
+          records,
+        });
       }
 
       const presenceMatch = p.match(/^\/api\/channels\/([^/]+)\/presence$/);

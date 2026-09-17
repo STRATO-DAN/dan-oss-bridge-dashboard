@@ -162,6 +162,31 @@ input:focus { outline: none; border-color: var(--dan-red); }
 .compose-row { display: flex; gap: 8px; margin-top: 10px; }
 .compose-row input { flex: 1; }
 
+/* Log-integrity panel — the visible face of `verify`. A channel-level badge (green = intact, coral =
+   tampering, neutral = nothing yet) plus a small mark on every message row. Reuses the same brand
+   tokens as presence/status so it reads as part of the same system. */
+.integrity-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.dan-btn-sm { font-size: 12px; padding: 7px 14px; }
+.integrity-badge {
+  font-family: var(--dan-mono); font-size: 12px; font-weight: 600;
+  padding: 5px 12px; border-radius: 999px; border: 1px solid var(--dan-border-2);
+}
+.integrity-badge.ok { border-color: var(--dan-ok); color: var(--dan-ok); }
+.integrity-badge.bad { border-color: var(--dan-red); color: var(--dan-red); }
+.integrity-badge.neutral { color: var(--dan-text); opacity: 0.75; }
+.integrity-hint { font-size: 12px; margin: 8px 0 0; }
+
+/* Per-message integrity mark, sits left of the sender name. */
+.msg-mark {
+  display: inline-block; width: 1.1em; font-family: var(--dan-mono); font-weight: 700;
+  text-align: center; margin-right: 6px; vertical-align: baseline;
+}
+.msg-mark.ok { color: var(--dan-ok); }
+.msg-mark.bad { color: var(--dan-red); }
+.msg-mark.warn { color: var(--dan-text); opacity: 0.6; }
+/* A message whose signature or chain link failed — coral rail so the eye lands on it immediately. */
+.message-row.broken { border-left: 3px solid var(--dan-red); padding-left: 8px; margin-left: -11px; }
+
 footer { padding: 20px 20px 40px; border-top: 1px solid var(--dan-border); font-size: 12.5px; font-weight: 500; }
 footer a { color: var(--dan-red); text-decoration: none; }
 footer a:hover { text-decoration: underline; }

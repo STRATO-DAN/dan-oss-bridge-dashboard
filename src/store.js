@@ -10,6 +10,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { GENESIS, linkOf } from "./chain.js";
 
 const PRESENCE_TTL_MS = 30_000;
 const MAX_MESSAGES_PER_CHANNEL = 2000;
@@ -225,7 +226,12 @@ export class BridgeStore {
     if (seen && seen > now) throw new BridgeError("REPLAY", "duplicate/replayed message (nonce already used)");
 
     const ch = this.#channel(channelName);
-    const message = { id: ++ch.seq, from, text, ts: tsNum, nonce, sig: sig ?? null };
+    // Hash-chain link: this message commits to the one before it, so a later `verify` can prove no
+    // message was deleted, reordered, or inserted (see chain.js). The very first message in a channel
+    // anchors to GENESIS; every later one carries the link of the current last message. Computed here
+    // under the single-writer hub lock + synchronous memory append, so the chain is naturally linear.
+    const prev = ch.messages.length ? linkOf(ch.messages[ch.messages.length - 1]) : GENESIS;
+    const message = { id: ++ch.seq, from, text, ts: tsNum, nonce, sig: sig ?? null, prev };
     ch.messages.push(message);
     if (ch.messages.length > this.maxMessages) {
       ch.messages.splice(0, ch.messages.length - this.maxMessages);
