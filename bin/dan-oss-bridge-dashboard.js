@@ -97,7 +97,68 @@ if (cmd === "sign") {
   process.exit(0);
 }
 
-const port = Number(process.env.DAN_OSS_BRIDGE_DASHBOARD_PORT) || 4875;
+// ── no-arg launcher path: hand-rolled flags (no dependency) ───────────────────────────────────────
+// Reached only when the command is neither `register` nor `sign` (both exit above). These flags are
+// additive: they never touch register/sign, and the human startup banner below is unchanged.
+const launcherArgv = process.argv.slice(2);
+const hasFlag = (f) => launcherArgv.includes(f);
+
+if (hasFlag("--version")) {
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  console.log(pkg.version);
+  process.exit(0);
+}
+
+if (hasFlag("--help")) {
+  console.log(`[DAN] BRIDGE DASHBOARD — a local, loopback-only messaging hub for agents and scripts.
+
+Usage:
+  dan-oss-bridge-dashboard [options]
+      Start the hub on 127.0.0.1 (loopback only) and open the UI in a browser.
+  dan-oss-bridge-dashboard register <id> --scope <cap> [--scope <cap> …] [--token <token>]
+      Mint a principal: a connection token + an Ed25519 signing keypair. Control plane only —
+      the running hub exposes NO identity-minting route. Scopes: channel:<name>, channel:*, admin.
+  dan-oss-bridge-dashboard sign --principal <id> --channel <name> --text "<text>" --key-file <path> [--nonce <n>] [--ts <ms>]
+      Produce a signed message body (JSON) ready to POST. The private key is read from a FILE, so
+      the secret never lands in the process list. Prints the body to stdout.
+
+Launcher options:
+  --help        Show this help and exit.
+  --version     Print the version and exit.
+  --json        Print the startup banner as ONE JSON object {"url","port"} instead of human text
+                (for scripts / CI). In this mode the hub does not open a browser.
+
+Environment:
+  DAN_OSS_BRIDGE_DASHBOARD_PORT   Port to bind on 127.0.0.1 (default 4875; 0 = pick a free port).
+  DAN_OSS_BRIDGE_DASHBOARD_DATA   Data directory (default ./.dan-oss-bridge-dashboard).
+
+Exit codes:
+  0   Success (including --help / --version).
+  1   Runtime failure — e.g. the port is already in use, or a register / sign error.
+  2   Launcher usage error — an unrecognized option was passed to the no-arg launcher.
+
+The hub binds 127.0.0.1 only. Every API call is authenticated; until you register a principal the
+API denies everything (fail-closed).`);
+  process.exit(0);
+}
+
+// Any unrecognized --flag on the launcher path is a usage error (exit 2). Positional arguments are
+// left untouched so existing behavior is unchanged.
+const knownLauncherFlags = new Set(["--json"]);
+const badFlag = launcherArgv.find((a) => a.startsWith("--") && !knownLauncherFlags.has(a));
+if (badFlag) {
+  console.error(`unknown option: ${badFlag}`);
+  console.error("run `dan-oss-bridge-dashboard --help` for usage.");
+  process.exit(2);
+}
+
+const jsonBanner = hasFlag("--json");
+
+// Default port 4875; an explicit 0 means "pick a free ephemeral port" (handy for --json/CI). Any
+// non-numeric or unset value falls back to the default, exactly as before.
+const rawPort = process.env.DAN_OSS_BRIDGE_DASHBOARD_PORT;
+const parsedPort = Number(rawPort);
+const port = rawPort && Number.isInteger(parsedPort) && parsedPort >= 0 ? parsedPort : 4875;
 
 let server;
 try {
@@ -107,22 +168,29 @@ try {
   process.exit(1);
 }
 
-const url = `http://127.0.0.1:${port}`;
-console.log(`[DAN] BRIDGE DASHBOARD running at ${url}`);
-console.log("A real, local messaging gateway for agents — post, read, and watch shared channels.");
-console.log(`Channels saved to: ${dataDir}`);
-if (!server._bridge.auth.hasAnyPrincipal()) {
-  console.log("\n⚠  No principals registered yet — every API call is denied until you mint one:");
-  console.log("     dan-oss-bridge-dashboard register <id> --scope channel:*\n");
-}
-console.log("Ctrl-C to stop.\n");
+const actualPort = server.address().port;
+const url = `http://127.0.0.1:${actualPort}`;
 
-// execFile, not exec — no shell. On Windows `start` is a cmd builtin, so it runs via cmd.exe.
-const [openerCmd, openerArgs] =
-  process.platform === "darwin" ? ["open", [url]]
-    : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
-      : ["xdg-open", [url]];
-execFile(openerCmd, openerArgs, () => {});
+if (jsonBanner) {
+  process.stdout.write(JSON.stringify({ url, port: actualPort }) + "\n");
+} else {
+  console.log(`[DAN] BRIDGE DASHBOARD running at ${url}`);
+  console.log("A real, local messaging gateway for agents — post, read, and watch shared channels.");
+  console.log(`Channels saved to: ${dataDir}`);
+  if (!server._bridge.auth.hasAnyPrincipal()) {
+    console.log("\n⚠  No principals registered yet — every API call is denied until you mint one:");
+    console.log("     dan-oss-bridge-dashboard register <id> --scope channel:*\n");
+  }
+  console.log("Ctrl-C to stop.\n");
+
+  // execFile, not exec — no shell. On Windows `start` is a cmd builtin, so it runs via cmd.exe.
+  // Human mode only: in --json (scripting/CI) mode we never spawn a browser.
+  const [openerCmd, openerArgs] =
+    process.platform === "darwin" ? ["open", [url]]
+      : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
+        : ["xdg-open", [url]];
+  execFile(openerCmd, openerArgs, () => {});
+}
 
 process.on("SIGINT", () => {
   server.close(() => process.exit(0));
