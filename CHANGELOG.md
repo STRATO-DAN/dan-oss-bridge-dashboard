@@ -3,6 +3,54 @@
 All notable changes to `@strato-dan/bridge-dashboard` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.3.1] — 2026-09-17
+
+Audit-hardening pass over the 0.3.0 durability/tamper-evidence work, before first publish of the 0.3.x
+line. (0.3.0 was never published to npm; this is a separate version so the fixes below are a distinct,
+reviewable set rather than a silent rewrite of 0.3.0's entry.) Every fix ships with a regression test that
+fails on the pre-fix code and passes after (`test/mythos-fixes.test.mjs`). Still zero runtime dependencies.
+
+### Security / correctness
+- **Audit chain verifies across rotation (no false tamper).** The hash-chain always spanned the rotation
+  boundary (a new `audit.log`'s first `prev` is the rotated file's tip), but `verifyChain(file)` read a
+  single file starting from `prev=null`, so a *clean* rotated log false-flagged as tampered. New
+  `Audit.verifyDir(dir)` verifies `audit.log.1` then `audit.log` as one continuous chain and returns
+  `ok:true` for a clean rotated log.
+- **Durable, serialized message persistence.** `postMessage` mutated memory then did an unserialized
+  whole-file read-modify-write; concurrent posts could let a slower rename of an older snapshot land last
+  and drop an already-acked message (in-memory seq ahead of disk, id reissued after restart). The persist
+  path is now serialized through an in-process write queue, so every acked message is durably on disk, in
+  order, before the post resolves.
+- **Unauthenticated flood no longer amplifies the audit log.** The per-principal rate limiter ran *after*
+  authentication, so the `401` path — and its `audit.record` — ran unthrottled; a flood wrote one audit
+  line per request, and via rotation/retention could evict real history. Unauthenticated requests are now
+  rate-limited per client IP *before* they audit (over the cap → `429` with no audit line).
+- **Dropped audit generations are detectable.** Two-generation retention discarded the chain root with no
+  trace. A durable append-only rotation ledger (`audit.anchor`) records the tip of every generation as it
+  is rotated out, so `verifyDir` can report `generations` vs `generationsOnDisk` / `droppedGenerations` —
+  an evicted or deleted generation is now detectable rather than silent.
+- **Crash between rotation and first append no longer orphans the chain.** If a crash landed after the
+  rotation rename but before the first append (leaving `audit.log` absent), the next append started a fresh
+  `prev=null` chain that verified clean in isolation. The chain tip is now seeded from `audit.log.1` when
+  `audit.log` is absent, so the post-crash continuation links to the rotated tip.
+- **Per-message size cap.** A single message's text is capped (16 KiB default); an oversize post is `413`
+  `TOO_LARGE` instead of an unbounded, amplified whole-file rewrite.
+- **Long-poll connection cap + socket timeout.** Concurrently-held long-polls are capped (over the cap a
+  `wait` degrades to an immediate read), and an idle-socket timeout (~35s, past the 25s long-poll ceiling)
+  reaps connections a client opens but never reads.
+- **`fsync` on durable writes.** The store's atomic write-then-rename and the audit append now `fsync` the
+  file and its parent directory (best-effort), so a crash right after a write doesn't lose a recorded line.
+- **Nonce recorded before the message that used it.** `nonces.json` is now persisted before
+  `channels.json`, so a crash between the two renames can at worst lose an un-acked message — never leave a
+  durable message whose nonce was never written (which would allow a replay after restart).
+- **Browser: a remembered signing key is reused only for its own principal.** The dashboard now records
+  which principal the IndexedDB-held key belongs to and refuses to sign as a *different* entered principal
+  with it, prompting for that principal's key instead.
+
+### Docs
+- `SECURITY.md` now documents two known, by-design limitations: public-key enumeration by any authenticated
+  principal (`GET /api/principals/<id>/pubkey`), and the PID-reuse edge in the single-writer `hub.lock`.
+
 ## [0.3.0] — 2026-09-17
 
 ### Security
