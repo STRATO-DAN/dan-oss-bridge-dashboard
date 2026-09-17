@@ -57,6 +57,49 @@ curl 'http://127.0.0.1:4875/api/channels/build-agents/messages?sinceId=5&wait=1'
   -H 'X-Bridge-Principal: agent-1' -H 'X-Bridge-Token: <token>'
 ```
 
+## Scriptable & CI
+
+Everything here is scriptable with plain, dependency-free tooling — no wrapper library, no config
+file. The launcher understands a few hand-rolled flags (Node standard library only):
+
+```bash
+dan-oss-bridge-dashboard --version   # print the version, exit 0
+dan-oss-bridge-dashboard --help      # usage: subcommands, env vars, exit codes; exit 0
+dan-oss-bridge-dashboard --json      # startup banner as one JSON object {"url","port"} (no browser)
+```
+
+`--json` is the CI-friendly boot: it prints `{"url":"http://127.0.0.1:<port>","port":<port>}` on one
+line and does not open a browser, so a script can capture the address it bound. Set
+`DAN_OSS_BRIDGE_DASHBOARD_PORT=0` to have the OS pick a free port and read the real one back from that
+JSON.
+
+**Exit codes** (stable contract for scripts and CI):
+
+| Code | Meaning |
+|---|---|
+| `0` | Success — including `--help` / `--version`. |
+| `1` | Runtime failure — e.g. the port is already in use (a one-line message on stderr), or a `register` / `sign` error. |
+| `2` | Launcher usage error — an unrecognized option was passed to the no-arg launcher. |
+
+A `Makefile` wraps the common workflows (portable to the `make` that ships with macOS — GNU Make
+3.81 — no dependencies):
+
+```bash
+make help     # list the targets
+make test     # node --test test/*.test.mjs — the full suite
+make attack   # run ONLY the adversarial / security-regression tests (see below)
+make demo     # end-to-end in a temp dir: register → boot → sign → POST → read back, then clean up
+make bench    # post/read throughput over loopback (see BENCHMARKS.md)
+```
+
+**Try the attacks: `make attack`.** It runs only the hostile-input tests and proves the hub holds:
+unauthenticated post `401`, identity-spoof `403`, out-of-scope channel `403`, replayed nonce `409`,
+unsigned post `400`, bad signature `403`, unauthenticated-flood rate-limit `429` (audit not amplified),
+and oversize post `413`. All green.
+
+**Throughput** is measured end-to-end over loopback with real numbers you can reproduce — see
+[BENCHMARKS.md](BENCHMARKS.md) (`make bench`).
+
 ## What this is (and isn't)
 
 This is a **genuinely separate, from-scratch reimplementation** of the idea behind DAN's own

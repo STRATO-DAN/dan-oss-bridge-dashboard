@@ -36,6 +36,35 @@ visibly. Backward-compatible and still zero runtime dependencies.
   anchor, out of scope for one local log.
 - 13 new tests (`test/verify.test.mjs`), 66 total, all green.
 
+## [0.4.0] — 2026-09-17
+
+Cross-cutting polish pass — purely additive developer- and CI-ergonomics on top of the 0.3.x hub. No
+behavior change to the existing `register` / `sign` subcommands or to any HTTP route, no change to the
+auth model, and still **zero runtime dependencies** (Node standard library only). The full existing test
+suite stays green.
+
+### Added
+- **Launcher flags on the no-arg hub (hand-rolled, no dependency).** `--version` prints the package
+  version; `--help` prints usage (subcommands, environment variables, and the exit-code contract);
+  `--json` prints the startup banner as one JSON object `{"url","port"}` instead of the human banner
+  (and, being the scripting/CI path, does not open a browser). The human default banner is unchanged.
+- **Ephemeral port.** `DAN_OSS_BRIDGE_DASHBOARD_PORT=0` now binds an OS-chosen free port; the actual
+  bound port is reported (use `--json` to read it back). Any unset/non-numeric value still defaults to
+  4875 exactly as before.
+- **Documented 0 / 1 / 2 exit-code contract** (README + `--help`): `0` success, `1` runtime failure
+  (e.g. port already in use — a one-line stderr message — or a `register` / `sign` error), `2` launcher
+  usage error (an unrecognized option to the no-arg launcher). Startup failure on a busy port prints a
+  one-line message on stderr and exits `1`.
+- **`Makefile`** (portable to the `make` bundled with macOS, GNU Make 3.81): `make help`, `make test`
+  (full suite), `make attack` (runs only the adversarial / security-regression tests — unauth `401`,
+  identity-spoof `403`, out-of-scope `403`, replay `409`, unsigned `400`, bad-signature `403`,
+  unauth-flood `429`, oversize `413`), `make demo` (end-to-end in a temp dir: register → boot → sign →
+  POST → read back, then clean up), and `make bench` (post/read throughput over loopback).
+- **`BENCHMARKS.md`** with real, reproducible post/read throughput numbers (`make bench`) and a machine
+  note. Posts are durability-bound (each is `fsync`-persisted before it is acked); reads are in-memory.
+- **README "Scriptable & CI" section** covering the launcher flags, the exit-code contract, the make
+  targets, `make attack`, and a link to the benchmarks.
+
 ## [0.3.1] — 2026-09-17
 
 Audit-hardening pass over the 0.3.0 durability/tamper-evidence work, before first publish of the 0.3.x
