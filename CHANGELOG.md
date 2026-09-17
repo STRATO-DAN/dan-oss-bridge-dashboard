@@ -3,6 +3,39 @@
 All notable changes to `@strato-dan/bridge-dashboard` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.5.0] — 2026-09-18
+
+Whole-log tamper-evidence, shown in the UI. Every message was already independently Ed25519-signed
+(proving one message's own content wasn't edited); this adds a per-message **hash chain** so the
+dashboard can prove no message was **deleted, reordered, or inserted** — and renders that verdict
+visibly. Backward-compatible and still zero runtime dependencies.
+
+### Added
+- **Hash chain over each channel's log** (`src/chain.js`). Every stored message now carries `prev`,
+  the SHA-256 of the message before it (the first anchors to a genesis constant). The link binds the
+  message's identity, content, its own signature, and its link to the prior message — so deleting,
+  reordering, inserting, or editing a message breaks the chain at the following message. The link is
+  **not** folded into the Ed25519 signature, so signatures written before the chain existed still
+  verify: authenticity (signature) and integrity (chain) are independent, composable layers. The hub
+  is single-writer with serialized persists, so the chain is naturally linear — no extra locking.
+- **`GET /api/channels/:channel/verify`** — authenticated + channel-scoped, read-only. Walks the
+  retained log and reports, per message, whether its signature verifies and whether its chain link is
+  intact, plus a channel-level verdict (`chainIntact`, `firstBreakId`) and forged/unverifiable counts.
+- **"Verify log integrity" panel in the dashboard UI.** A live badge (green *chain intact — N
+  verified*, coral *tampering detected at message #N* with a plain-English explanation) and a ✓ / ⚠
+  mark on every message row, with the broken message flagged by a coral rail. It re-verifies on join,
+  on new messages, and on demand. This makes "a bus that can prove its own log wasn't tampered with"
+  something a viewer *sees*, not a claim in the README.
+
+### Notes
+- Purely additive: the message record gains a `prev` field; older un-chained messages read back as
+  "signatures only" and are never falsely flagged. All existing behavior/tests unchanged.
+- Honest limit (documented): the chain can't detect a truncated head/tail — a shorter retained window
+  stays internally valid, and its oldest message is an un-checkable anchor (the same boundary the
+  store already reports as `minRetainedId`/`gap`). Detecting a dropped head/tail needs an external
+  anchor, out of scope for one local log.
+- 13 new tests (`test/verify.test.mjs`), 66 total, all green.
+
 ## [0.3.1] — 2026-09-17
 
 Audit-hardening pass over the 0.3.0 durability/tamper-evidence work, before first publish of the 0.3.x

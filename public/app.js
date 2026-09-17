@@ -160,8 +160,9 @@ function appendMessages(messages) {
     lastId = Math.max(lastId, m.id);
     const li = document.createElement("li");
     li.className = "message-row";
+    li.dataset.msgId = m.id;
     const abs = new Date(m.ts).toLocaleString();
-    li.innerHTML = `<span class="message-from">${escapeHtml(m.from)}</span><span class="message-meta hint" data-ts="${m.ts}" title="${escapeHtml(abs)}">${escapeHtml(relativeTime(m.ts))}</span><div class="message-text">${escapeHtml(m.text)}</div>`;
+    li.innerHTML = `<span class="msg-mark" data-mark-id="${m.id}" title="Integrity not checked yet"></span><span class="message-from">${escapeHtml(m.from)}</span><span class="message-meta hint" data-ts="${m.ts}" title="${escapeHtml(abs)}">${escapeHtml(relativeTime(m.ts))}</span><div class="message-text">${escapeHtml(m.text)}</div>`;
     list.appendChild(li);
   }
   if (nearBottom) list.scrollTop = list.scrollHeight;
@@ -200,7 +201,7 @@ async function pollLoop(session) {
         continue;
       }
       handleGap(data);
-      if (data.messages.length > 0) appendMessages(data.messages);
+      if (data.messages.length > 0) { appendMessages(data.messages); verifyIntegrity(); }
     } catch {
       await new Promise((r) => setTimeout(r, 2000)); // honest backoff on a transient network hiccup
     }
@@ -229,6 +230,71 @@ async function refreshChannels() {
       .join("");
   } catch {
     /* transient — leave the last-rendered list in place */
+  }
+}
+
+// ── log-integrity verify ──────────────────────────────────────────────────────────────────────
+// Ask the hub to walk the channel's stored log and report, per message, whether its Ed25519 signature
+// verifies and whether its hash-chain link is intact. Then paint a channel-level badge and mark each
+// message row. This turns "a bus that can prove its log wasn't tampered with" into something visible.
+let verifyInFlight = false;
+function renderBadge(kind, text, detail) {
+  const badge = $("integrityBadge"), hint = $("integrityHint");
+  if (badge) {
+    badge.hidden = false;
+    badge.className = `integrity-badge ${kind}`;
+    const glyph = kind === "ok" ? "✓ " : kind === "bad" ? "⚠ " : "";
+    badge.textContent = glyph + text;
+  }
+  if (hint) { if (detail) { hint.hidden = false; hint.textContent = detail; } else hint.hidden = true; }
+}
+async function verifyIntegrity() {
+  if (!channel || verifyInFlight) return;
+  verifyInFlight = true;
+  const btn = $("verifyBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const { status, data } = await apiGet(`/api/channels/${encodeURIComponent(channel)}/verify`);
+    if (!data.ok) { renderBadge("bad", authError(status, data)); return; }
+    const byId = new Map((data.records || []).map((r) => [r.id, r]));
+    for (const el of document.querySelectorAll(".msg-mark[data-mark-id]")) {
+      const r = byId.get(Number(el.dataset.markId));
+      const row = el.closest(".message-row");
+      if (row) row.classList.remove("broken");
+      if (!r) { el.className = "msg-mark"; el.textContent = ""; el.title = "Integrity not checked"; continue; }
+      const sigBad = r.sigVerified === false;
+      const chainBad = r.chainOk === false;
+      if (sigBad || chainBad) {
+        el.className = "msg-mark bad"; el.textContent = "⚠";
+        el.title = sigBad && chainBad ? "Signature invalid AND chain link broken"
+          : chainBad ? "Chain link broken — a message was deleted, reordered, or inserted here"
+          : "Signature does not verify — this message's content was altered after it was posted";
+        if (row) row.classList.add("broken");
+      } else if (r.sigVerified === null) {
+        el.className = "msg-mark warn"; el.textContent = "?";
+        el.title = "Sender has no registered key on this hub — can't authenticate";
+      } else {
+        el.className = "msg-mark ok"; el.textContent = "✓";
+        el.title = r.chainOk === true ? "Signature verified · chain link intact" : "Signature verified";
+      }
+    }
+    const total = data.counts ? data.counts.total : 0;
+    const forged = data.counts ? data.counts.sigForged : 0;
+    if (total === 0) {
+      renderBadge("neutral", "No messages yet — nothing to verify.");
+    } else if (data.chainIntact === false || forged > 0) {
+      const where = data.firstBreakId ? ` at message #${data.firstBreakId}` : "";
+      renderBadge("bad", `Tampering detected${where}`,
+        "A message was changed, removed, reordered, or inserted after it was posted. The hash chain and/or a signature no longer matches.");
+    } else {
+      const chainNote = data.chainPresent ? "chain intact" : "signatures only (older messages predate the chain)";
+      renderBadge("ok", `Verified — ${total} message${total === 1 ? "" : "s"}, ${chainNote}`);
+    }
+  } catch {
+    renderBadge("bad", "Could not reach the hub to verify.");
+  } finally {
+    verifyInFlight = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -294,6 +360,7 @@ async function join() {
 
   await loadInitialMessages(session);
   if (!polling) return;
+  verifyIntegrity(); // paint the integrity badge + per-message marks for the freshly-loaded log
   pollLoop(session);
 
   if (presenceTimer) clearInterval(presenceTimer);
@@ -318,12 +385,18 @@ async function send() {
   if (!data.ok) setStatus($("joinStatus"), "err", authError(status, data));
 }
 
+function bindVerifyButton() {
+  const btn = $("verifyBtn");
+  if (btn) btn.addEventListener("click", verifyIntegrity);
+}
+
 // DOM bootstrap — only in a real browser. Guarded so this module can be imported by the node test suite
 // (to unit-test the pure helpers above) without a DOM present.
 if (typeof document !== "undefined") {
   $("joinBtn").addEventListener("click", join);
   $("sendBtn").addEventListener("click", send);
   $("composeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  bindVerifyButton();
 
   $("channelList").addEventListener("click", (e) => {
     const btn = e.target.closest(".channel-item");

@@ -119,6 +119,37 @@ re-verifies a stored message with the exported `verifyMessage(message, channel, 
 UI signs the same way, via WebCrypto Ed25519, so a message posted from the dashboard is just as verifiable
 as one from an agent.
 
+## Verify log integrity
+
+Per-message signatures prove that a *single* message's own content wasn't edited. On their own they do
+**not** catch a writer who **deletes, reorders, or inserts** whole messages — the surviving signatures
+still verify. So every stored message also carries `prev`, the SHA-256 of the message before it in the
+channel: a hash chain. Break the order — remove a message, swap two, splice one in, or edit one in place
+— and the following message's `prev` no longer matches, at an exact point.
+
+`GET /api/channels/<channel>/verify` (authenticated + scoped) walks the channel and returns, per
+message, whether its signature verifies and whether its chain link is intact, plus a channel-level
+verdict (`chainIntact`, `firstBreakId`) and forged/unverifiable counts:
+
+```bash
+curl -H "X-Bridge-Principal: agent-1" -H "X-Bridge-Token: <token>" \
+  http://127.0.0.1:4875/api/channels/general/verify
+# { "ok": true, "chainPresent": true, "chainIntact": true, "firstBreakId": null,
+#   "counts": { "total": 3, "sigForged": 0, "sigUnverifiable": 0 }, "records": [ ... ] }
+```
+
+The dashboard renders this as a **Verify log integrity** panel: a badge reading *chain intact — N
+verified* (green) or *tampering detected at message #N* (coral, with a plain-English explanation), and
+a ✓ / ⚠ mark on every message row so the exact tampered message stands out. It re-checks on join, when
+new messages arrive, and on demand — turning "a bus that can prove its own log wasn't tampered with"
+into something you can see, not just read.
+
+The signature is unchanged by this — the chain link is not folded into it — so a message signed before
+the chain existed still verifies; authenticity and log-integrity are independent, composable layers.
+Honest limit: the chain can't detect a truncated head/tail (a shorter retained window stays internally
+valid, and its oldest message is an un-checkable anchor — the same boundary reported as `minRetainedId`
+/ `gap`); detecting a dropped head/tail needs an external anchor, out of scope for one local log.
+
 ## Honest limits
 
 - **One machine, loopback only.** This is a local dev-time hub, not a distributed message bus. If
