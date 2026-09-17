@@ -16,6 +16,9 @@ const MAX_MESSAGES_PER_CHANNEL = 2000;
 const MAX_CHANNELS = 512;        // a bounded number of channels — one principal can't create unbounded state.
 const NONCE_TTL_MS = 10 * 60_000; // how long a used nonce is remembered for replay rejection.
 const TS_SKEW_MS = 5 * 60_000;    // a message whose client ts is outside this window is rejected as stale.
+export const MAX_MESSAGE_BYTES = 16 * 1024; // a single message's text is capped — an oversize post is 413,
+                                            // not an unbounded whole-file rewrite (the store snapshots the
+                                            // whole channel per post, so a 256 KiB message is O(n) per write).
 
 /** Typed rejections the server maps to real status codes, instead of a generic 500. */
 export class BridgeError extends Error {
@@ -32,11 +35,14 @@ export class BridgeStore {
     // the history-gap path without posting thousands of messages.
     this.maxMessages = Number.isInteger(opts.maxMessagesPerChannel) && opts.maxMessagesPerChannel > 0
       ? opts.maxMessagesPerChannel : MAX_MESSAGES_PER_CHANNEL;
+    this.maxMessageBytes = Number.isInteger(opts.maxMessageBytes) && opts.maxMessageBytes > 0
+      ? opts.maxMessageBytes : MAX_MESSAGE_BYTES;
     this.channels = new Map(); // name -> { messages: [], seq, minRetainedId, presence: Map(principal -> lastSeen) }
     this.events = new EventEmitter();
     this.events.setMaxListeners(0);
     this._nonces = new Map(); // nonce -> expiry ts (global; nonces are unique per post)
     this._holdsLock = false;
+    this._persistTail = Promise.resolve(); // serializes the durable write path (one persist at a time, in order)
   }
 
   async init() {
@@ -114,13 +120,26 @@ export class BridgeStore {
     } catch { /* already gone */ }
   }
 
+  // Serialize the durable write path. Concurrent posts must not interleave the whole-file
+  // read-modify-write: each post mutates memory synchronously (so ids are already distinct), but if their
+  // persists ran concurrently a slower rename of an OLDER snapshot could land last and drop an
+  // already-acked message — leaving the in-memory seq ahead of disk and reissuing that id after a restart.
+  // Chaining the persists so they run one at a time, in submission order, guarantees every acked message
+  // is durably on disk before postMessage resolves, and no stale snapshot ever clobbers a newer one.
+  #enqueuePersist() {
+    const run = () => this.#persist();
+    this._persistTail = this._persistTail.then(run, run); // continue the chain even if a prior persist failed
+    return this._persistTail;
+  }
+
   async #persist() {
+    // Persist the nonce set BEFORE the channel state: a message is only durable once its nonce is already
+    // recorded, so a crash between the two renames can at worst lose an un-acked message — never leave a
+    // durable message whose nonce was never written (which would let it be replayed after a restart).
+    await this.#persistNonces();
     const plain = {};
     for (const [name, ch] of this.channels) plain[name] = { messages: ch.messages, seq: ch.seq, minRetainedId: ch.minRetainedId };
-    const tmp = `${this.file}.${randomUUID()}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(plain), "utf8");
-    await fs.rename(tmp, this.file);
-    await this.#persistNonces();
+    await this.#atomicWrite(this.file, JSON.stringify(plain));
   }
 
   // Persist the still-live used-nonce set (expired entries dropped) so replay protection survives a
@@ -129,9 +148,34 @@ export class BridgeStore {
     const now = Date.now();
     const live = [];
     for (const [nonce, exp] of this._nonces) if (exp > now) live.push([nonce, exp]);
-    const tmp = `${this.nonceFile}.${randomUUID()}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(live), "utf8");
-    await fs.rename(tmp, this.nonceFile);
+    await this.#atomicWrite(this.nonceFile, JSON.stringify(live));
+  }
+
+  // Durable atomic replace: write a temp file, fsync its contents, rename it over the target, then fsync
+  // the directory so the rename itself survives a crash. fsync is best-effort (not portable everywhere).
+  async #atomicWrite(file, data) {
+    const tmp = `${file}.${randomUUID()}.tmp`;
+    const fh = await fs.open(tmp, "w", 0o600);
+    try {
+      await fh.writeFile(data, "utf8");
+      try { await fh.sync(); } catch { /* fsync unsupported here — best effort */ }
+    } finally {
+      await fh.close();
+    }
+    await fs.rename(tmp, file);
+    await this.#fsyncDir();
+  }
+
+  async #fsyncDir() {
+    let fh;
+    try {
+      fh = await fs.open(this.dataDir, "r");
+      await fh.sync();
+    } catch {
+      /* opening/fsyncing a directory is not portable (e.g. Windows) — best effort */
+    } finally {
+      if (fh) await fh.close().catch(() => {});
+    }
   }
 
   #channel(name, { create } = { create: true }) {
@@ -161,6 +205,11 @@ export class BridgeStore {
     if (!nonce || typeof nonce !== "string" || nonce.length > 128) {
       throw new BridgeError("NONCE_REQUIRED", "a unique `nonce` is required (replay protection)");
     }
+    // A single message's text is capped: the store snapshots the whole channel on every post, so an
+    // oversize message is an amplified O(n) whole-file rewrite. Reject it (413) rather than accept it.
+    if (Buffer.byteLength(String(text ?? ""), "utf8") > this.maxMessageBytes) {
+      throw new BridgeError("TOO_LARGE", `message text exceeds the ${this.maxMessageBytes}-byte limit`);
+    }
     // The stored `ts` is the client's own timestamp (the value the signature covers), so a message
     // stays independently verifiable after storage; it must still fall inside the freshness window.
     let tsNum = now;
@@ -183,7 +232,7 @@ export class BridgeStore {
     }
     ch.minRetainedId = ch.messages.length ? ch.messages[0].id : ch.seq;
     this._nonces.set(nonce, now + NONCE_TTL_MS);
-    await this.#persist();
+    await this.#enqueuePersist(); // serialized durable write — resolves only once THIS post is on disk
     this.events.emit(channelName, message);
     return message;
   }

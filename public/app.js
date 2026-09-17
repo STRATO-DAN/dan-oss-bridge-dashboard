@@ -4,12 +4,20 @@
 //
 // Identity is authenticated: the client sends a registered principal + token on every request, and
 // the server stamps the sender itself — this tab cannot post under a name it hasn't proven.
+// A remembered (IndexedDB) signing key may only be reused when it belongs to the principal being entered —
+// reusing agent-a's key while joining as agent-b would sign as the wrong identity. Pure + exported so it is
+// unit-tested by the node suite (which can't drive the browser DOM/IndexedDB directly).
+export function keyMatchesPrincipal(storedPrincipal, enteredPrincipal) {
+  return !!enteredPrincipal && storedPrincipal === enteredPrincipal;
+}
+
 const $ = (id) => document.getElementById(id);
 
 let channel = null;
 let principal = null;
 let token = null;
 let signingKey = null; // imported WebCrypto Ed25519 private key (never leaves the browser)
+let signingKeyPrincipal = null; // which principal the in-memory signingKey belongs to (guards cross-principal reuse)
 let lastId = 0;
 let polling = false;
 let presenceTimer = null;
@@ -255,10 +263,15 @@ async function join() {
     catch { setStatus(status, "err", "Signing key must be the JSON JWK printed by `register`."); return; }
     try { signingKey = await importSigningKey(jwk); }
     catch { setStatus(status, "err", "Could not load the Ed25519 signing key in this browser — check the key value."); return; }
+    signingKeyPrincipal = principalValue;
     await saveSigningKey(principalValue, signingKey);
     $("keyInput").value = ""; // drop the raw JWK from the DOM once it is imported + stored
-  } else if (!signingKey) {
-    setStatus(status, "err", "Paste your signing key (the JWK from `register`) the first time — this browser then remembers it securely (IndexedDB, non-extractable) and won't ask again.");
+  } else if (!signingKey || !keyMatchesPrincipal(signingKeyPrincipal, principalValue)) {
+    // A remembered key is reused ONLY when it belongs to THIS principal — never signing as the entered
+    // principal with a key registered to a different one.
+    setStatus(status, "err", signingKey
+      ? "The remembered signing key belongs to a different principal — paste this principal's signing key (the JWK from `register`)."
+      : "Paste your signing key (the JWK from `register`) the first time — this browser then remembers it securely (IndexedDB, non-extractable) and won't ask again.");
     return;
   }
 
@@ -305,31 +318,37 @@ async function send() {
   if (!data.ok) setStatus($("joinStatus"), "err", authError(status, data));
 }
 
-$("joinBtn").addEventListener("click", join);
-$("sendBtn").addEventListener("click", send);
-$("composeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+// DOM bootstrap — only in a real browser. Guarded so this module can be imported by the node test suite
+// (to unit-test the pure helpers above) without a DOM present.
+if (typeof document !== "undefined") {
+  $("joinBtn").addEventListener("click", join);
+  $("sendBtn").addEventListener("click", send);
+  $("composeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
 
-$("channelList").addEventListener("click", (e) => {
-  const btn = e.target.closest(".channel-item");
-  if (!btn || !btn.dataset.channel || btn.dataset.channel === channel) return;
-  $("channelInput").value = btn.dataset.channel;
-  join();
-});
+  $("channelList").addEventListener("click", (e) => {
+    const btn = e.target.closest(".channel-item");
+    if (!btn || !btn.dataset.channel || btn.dataset.channel === channel) return;
+    $("channelInput").value = btn.dataset.channel;
+    join();
+  });
 
-setInterval(() => {
-  for (const el of document.querySelectorAll(".message-meta[data-ts]")) {
-    el.textContent = relativeTime(Number(el.dataset.ts));
-  }
-}, 30_000);
+  setInterval(() => {
+    for (const el of document.querySelectorAll(".message-meta[data-ts]")) {
+      el.textContent = relativeTime(Number(el.dataset.ts));
+    }
+  }, 30_000);
 
-loadCreds();
-// Restore the signing key from IndexedDB (if this browser already holds one) so a returning viewer needn't
-// re-paste the JWK — it's a non-extractable CryptoKey handle: usable to sign, impossible to read back out.
-loadSigningKeyRecord().then((rec) => {
-  if (rec && rec.key) {
-    signingKey = rec.key;
-    const el = $("keyInput");
-    if (el) el.placeholder = "remembered securely in this browser (IndexedDB) — leave blank to reuse, or paste a new JWK to replace";
-  }
-});
-window.addEventListener("beforeunload", () => { polling = false; });
+  loadCreds();
+  // Restore the signing key from IndexedDB (if this browser already holds one) so a returning viewer needn't
+  // re-paste the JWK — it's a non-extractable CryptoKey handle: usable to sign, impossible to read back out.
+  // The principal it belongs to is remembered too, so it is reused only when THAT principal is the one joining.
+  loadSigningKeyRecord().then((rec) => {
+    if (rec && rec.key) {
+      signingKey = rec.key;
+      signingKeyPrincipal = rec.principal || null;
+      const el = $("keyInput");
+      if (el) el.placeholder = "remembered securely in this browser (IndexedDB) — leave blank to reuse, or paste a new JWK to replace";
+    }
+  });
+  window.addEventListener("beforeunload", () => { polling = false; });
+}

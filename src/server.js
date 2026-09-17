@@ -97,11 +97,25 @@ function isCrossSite(req) {
   return s === "cross-site" || s === "same-site";
 }
 
-export function createServer({ dataDir }) {
+const MAX_HELD_POLLS = 1024;      // cap concurrently-held long-poll connections (bounds sockets + listeners)
+const SOCKET_TIMEOUT_MS = 35_000; // reap an idle socket ~10s past the 25s long-poll ceiling
+
+export function createServer(cfg = {}) {
+  const { dataDir } = cfg;
   const store = new BridgeStore(dataDir);
   const auth = new AuthStore(dataDir);
   const audit = new Audit(dataDir);
   const limiter = new RateLimiter({ capacity: 120, refillPerSec: 2 }); // burst 120, ~2/s sustained per principal
+  // Unauthenticated requests carry no principal to scope a limit to, so they are capped per client IP
+  // (loopback → one shared bucket) BEFORE their 401 + audit.record runs. Without this, an unauthenticated
+  // flood writes one audit line per request — amplifying disk writes and, via retention/rotation, evicting
+  // real audit history. Over the cap the request is refused (429) WITHOUT auditing, bounding unauth volume.
+  const unauthLimiter = new RateLimiter({
+    capacity: Number.isInteger(cfg.unauthBurst) ? cfg.unauthBurst : 60,
+    refillPerSec: Number.isFinite(cfg.unauthRefillPerSec) ? cfg.unauthRefillPerSec : 1,
+  });
+  const maxHeldPolls = Number.isInteger(cfg.maxHeldPolls) && cfg.maxHeldPolls >= 0 ? cfg.maxHeldPolls : MAX_HELD_POLLS;
+  let heldPolls = 0; // number of long-polls currently holding a connection open
   const ready = store.init();
 
   const server = http.createServer(async (req, res) => {
@@ -125,6 +139,12 @@ export function createServer({ dataDir }) {
     // ── authenticate every API request (deny by default) ──────────────────────────────────────────
     const subject = authenticate(auth, req);
     if (!subject) {
+      // Rate-limit the unauthenticated path per client IP BEFORE it audits, so a flood can't write (and
+      // rotate away) unbounded audit volume. Over the cap → 429 with NO audit line.
+      const ip = req.socket?.remoteAddress || "unknown";
+      if (!unauthLimiter.take(ip)) {
+        return sendJson(res, 429, { ok: false, reason: "rate limit exceeded — slow down" });
+      }
       audit.record({ op: "api", result: "deny", reason: "unauthenticated" });
       const reason = auth.hasAnyPrincipal()
         ? "authentication required — send X-Bridge-Principal + X-Bridge-Token (or Authorization: Bearer <principal>:<token>)"
@@ -179,8 +199,17 @@ export function createServer({ dataDir }) {
         }
         if (req.method === "GET") {
           const sinceId = Number(url.searchParams.get("sinceId")) || 0;
-          const wait = url.searchParams.get("wait") === "1";
-          const result = await store.waitForMessages(channel, sinceId, wait ? 25000 : 0);
+          // Cap concurrently-held long-polls: over capacity, degrade to an immediate read instead of
+          // holding another connection (and EventEmitter listener) open under a long-poll flood.
+          const hold = url.searchParams.get("wait") === "1" && heldPolls < maxHeldPolls;
+          let result;
+          if (hold) {
+            heldPolls++;
+            try { result = await store.waitForMessages(channel, sinceId, 25000); }
+            finally { heldPolls--; }
+          } else {
+            result = await store.waitForMessages(channel, sinceId, 0);
+          }
           return sendJson(res, 200, {
             ok: true,
             messages: result.messages,
@@ -226,7 +255,7 @@ export function createServer({ dataDir }) {
       res.end(JSON.stringify({ ok: false, reason: "not found" }));
     } catch (err) {
       if (err instanceof BridgeError) {
-        const status = { REPLAY: 409, STALE: 400, NONCE_REQUIRED: 400, TOO_MANY_CHANNELS: 429 }[err.code] || 400;
+        const status = { REPLAY: 409, STALE: 400, NONCE_REQUIRED: 400, TOO_MANY_CHANNELS: 429, TOO_LARGE: 413 }[err.code] || 400;
         audit.record({ op: "message.post", result: "deny", principal: subject.id, reason: err.code });
         return sendJson(res, status, { ok: false, reason: err.message, code: err.code });
       }
@@ -236,8 +265,11 @@ export function createServer({ dataDir }) {
     }
   });
 
+  // Reap idle sockets past the long-poll ceiling so a client that opens connections and never reads can't
+  // pin them open indefinitely (a long-poll answers at 25s, well before this 35s idle timeout fires).
+  server.setTimeout(SOCKET_TIMEOUT_MS);
   server.on("close", () => { store.close().catch(() => {}); });
-  server._bridge = { store, auth, audit, ready };
+  server._bridge = { store, auth, audit, ready, get heldPolls() { return heldPolls; }, maxHeldPolls };
   return server;
 }
 
