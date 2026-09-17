@@ -125,6 +125,29 @@ test("INV-06: a replayed nonce is rejected", () =>
     );
   }));
 
+test("INV-06 (durable): a used nonce is STILL rejected after a restart — replay protection survives a bounce", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dan-oss-bridge-nonce-restart-"));
+  const a = new BridgeStore(dir);
+  await a.init();
+  try {
+    await a.postMessage("g", "agent-1", "approve deployment", { nonce: "fixed-nonce" });
+    await a.close(); // release the single-writer lock and simulate a hub restart
+    const b = new BridgeStore(dir);
+    await b.init();
+    try {
+      await assert.rejects(
+        () => b.postMessage("g", "agent-1", "approve deployment", { nonce: "fixed-nonce" }),
+        (e) => e instanceof BridgeError && e.code === "REPLAY",
+        "a nonce used BEFORE the restart must still be rejected AFTER it (nonces persist to nonces.json)",
+      );
+    } finally {
+      await b.close();
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("a stale client timestamp is rejected", () =>
   withStore(async (store) => {
     await assert.rejects(

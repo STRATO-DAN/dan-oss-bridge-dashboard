@@ -64,7 +64,7 @@
       </div>
       <div style="margin-top:10px;">
         <label for="keyInput">Signing key (private JWK)</label>
-        <input type="password" id="keyInput" placeholder='the {"kty":"OKP","crv":"Ed25519",...} printed by `register` — kept in this browser only'>
+        <input type="password" id="keyInput" placeholder='the {"kty":"OKP","crv":"Ed25519",...} from `register` — imported to a non-extractable key in this browser (IndexedDB); needed only the first time'>
       </div>
       <button class="dan-btn" id="joinBtn" style="margin-top:12px;">Join</button>
       <div id="joinStatus" class="status-line" hidden></div>

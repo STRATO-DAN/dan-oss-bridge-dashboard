@@ -23,11 +23,15 @@ function loadCreds() {
     const c = JSON.parse(localStorage.getItem(REMEMBER) || "{}");
     if (c.principal) $("nameInput").value = c.principal;
     if (c.token) $("tokenInput").value = c.token;
-    if (c.key) $("keyInput").value = c.key;
+    // The signing key is NO LONGER read from (or kept in) localStorage. If an older build stored the raw
+    // JWK here, scrub it now so upgrading removes the exposed private key from this browser.
+    if (c.key) { try { localStorage.setItem(REMEMBER, JSON.stringify({ principal: c.principal, token: c.token })); } catch { /* non-fatal */ } }
   } catch { /* storage unavailable — fields just start empty */ }
 }
 function saveCreds() {
-  try { localStorage.setItem(REMEMBER, JSON.stringify({ principal, token, key: $("keyInput").value.trim() })); } catch { /* non-fatal */ }
+  // principal + token only — a per-viewer convenience. The signing key lives as a non-extractable CryptoKey
+  // in IndexedDB (see saveSigningKey), never as raw material in localStorage.
+  try { localStorage.setItem(REMEMBER, JSON.stringify({ principal, token })); } catch { /* non-fatal */ }
 }
 
 function authHeaders() {
@@ -50,7 +54,50 @@ function canonical(from, ch, nonce, ts, text) {
   return JSON.stringify([String(from), String(ch), String(nonce), Number(ts), String(text)]);
 }
 async function importSigningKey(jwk) {
+  // `false` = NON-EXTRACTABLE: once imported, the private bytes can never be read back out (exportKey
+  // throws). The key can sign, but no script — including a successful XSS — can exfiltrate it.
   return crypto.subtle.importKey("jwk", { kty: "OKP", crv: "Ed25519", x: jwk.x, d: jwk.d }, { name: "Ed25519" }, false, ["sign"]);
+}
+
+// Signing-key custody: the imported NON-EXTRACTABLE CryptoKey handle is kept in IndexedDB — never the raw
+// JWK in localStorage. Structured-cloning a non-extractable CryptoKey preserves the ability to SIGN but not
+// to read the private material, so a compromised tab can at worst sign while it is open, never steal a
+// reusable key. The raw JWK from `register` is used once to import, then dropped; this app never persists it.
+const KEY_DB = "dan-oss-bridge-key";
+const KEY_STORE = "signing";
+function openKeyDB() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") return reject(new Error("IndexedDB unavailable"));
+    const req = indexedDB.open(KEY_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(KEY_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveSigningKey(principalId, cryptoKey) {
+  try {
+    const db = await openKeyDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(KEY_STORE, "readwrite");
+      tx.objectStore(KEY_STORE).put({ principal: principalId, key: cryptoKey }, "current");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch { /* IndexedDB blocked (private window etc.) — the key just lives in memory for this session */ }
+}
+async function loadSigningKeyRecord() {
+  try {
+    const db = await openKeyDB();
+    const rec = await new Promise((resolve, reject) => {
+      const tx = db.transaction(KEY_STORE, "readonly");
+      const r = tx.objectStore(KEY_STORE).get("current");
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+    db.close();
+    return rec;
+  } catch { return null; }
 }
 async function signBody(ch, text) {
   const nonce = newNonce();
@@ -195,15 +242,25 @@ async function join() {
     setStatus(status, "err", "Channel name: letters, digits, - and _ only, up to 64 characters.");
     return;
   }
-  if (!principalValue || !tokenValue || !keyValue) {
-    setStatus(status, "err", "Enter your registered principal id, connection token, and signing key (all minted by `register`).");
+  if (!principalValue || !tokenValue) {
+    setStatus(status, "err", "Enter your registered principal id and connection token (from `register`).");
     return;
   }
-  let jwk;
-  try { jwk = JSON.parse(keyValue); }
-  catch { setStatus(status, "err", "Signing key must be the JSON JWK printed by `register`."); return; }
-  try { signingKey = await importSigningKey(jwk); }
-  catch { setStatus(status, "err", "Could not load the Ed25519 signing key in this browser — check the key value."); return; }
+  // Signing key: import a freshly-pasted JWK the first time, otherwise reuse the non-extractable key this
+  // browser already holds in IndexedDB. The raw JWK is never persisted — once imported it is cleared from
+  // the form and only the non-extractable CryptoKey handle is kept.
+  if (keyValue) {
+    let jwk;
+    try { jwk = JSON.parse(keyValue); }
+    catch { setStatus(status, "err", "Signing key must be the JSON JWK printed by `register`."); return; }
+    try { signingKey = await importSigningKey(jwk); }
+    catch { setStatus(status, "err", "Could not load the Ed25519 signing key in this browser — check the key value."); return; }
+    await saveSigningKey(principalValue, signingKey);
+    $("keyInput").value = ""; // drop the raw JWK from the DOM once it is imported + stored
+  } else if (!signingKey) {
+    setStatus(status, "err", "Paste your signing key (the JWK from `register`) the first time — this browser then remembers it securely (IndexedDB, non-extractable) and won't ask again.");
+    return;
+  }
 
   channel = channelName;
   principal = principalValue;
@@ -266,4 +323,13 @@ setInterval(() => {
 }, 30_000);
 
 loadCreds();
+// Restore the signing key from IndexedDB (if this browser already holds one) so a returning viewer needn't
+// re-paste the JWK — it's a non-extractable CryptoKey handle: usable to sign, impossible to read back out.
+loadSigningKeyRecord().then((rec) => {
+  if (rec && rec.key) {
+    signingKey = rec.key;
+    const el = $("keyInput");
+    if (el) el.placeholder = "remembered securely in this browser (IndexedDB) — leave blank to reuse, or paste a new JWK to replace";
+  }
+});
 window.addEventListener("beforeunload", () => { polling = false; });
