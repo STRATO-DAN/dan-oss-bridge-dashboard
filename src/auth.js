@@ -65,7 +65,10 @@ export class AuthStore {
       const next = new Map();
       for (const [id, rec] of Object.entries(raw)) {
         if (!PRINCIPAL_RE.test(id) || !rec || typeof rec.tokenHash !== "string" || typeof rec.salt !== "string") continue;
-        next.set(id, { tokenHash: rec.tokenHash, salt: rec.salt, scopes: normalizeScopes(rec.scopes), publicKey: rec.publicKey || null });
+        const entry = { tokenHash: rec.tokenHash, salt: rec.salt, scopes: normalizeScopes(rec.scopes), publicKey: rec.publicKey || null };
+        const hist = AuthStore.validHistoricalKeys(rec.historicalKeys);
+        if (hist.length > 0) entry.historicalKeys = hist;
+        next.set(id, entry);
       }
       this._principals = next;
       this._mtimeMs = st.mtimeMs;
@@ -96,11 +99,36 @@ export class AuthStore {
     return { id, scopes: rec.scopes, publicKey: rec.publicKey || null };
   }
 
-  /** A principal's public signing key (JWK), for verifying message signatures independently of the hub. */
+  /** A principal's public signing key (JWK), for verifying message signatures independently of the hub.
+   *  Unchanged contract: the CURRENT key, or null. Historical keys live behind getVerificationKeys(). */
   getPublicKey(principalId) {
     this._refresh();
     const rec = this._principals.get(String(principalId || "").trim());
     return rec ? rec.publicKey || null : null;
+  }
+
+  // Key history for rotation survival: every key a principal ever used, newest first. Verifiers
+  // try each in turn, so a re-registration (new signing key) never retroactively breaks the
+  // evidence — old messages verify against the retired key they were actually signed with.
+  static validHistoricalKeys(value) {
+    if (!Array.isArray(value)) return [];
+    // Ed25519 JWK shape: { kty: "OKP", crv: "Ed25519", x } — validate the real fields so a
+    // malformed history entry can never poison verification, and valid keys always survive.
+    return value
+      .filter((e) => e && typeof e === "object" && e.publicKey && typeof e.publicKey === "object"
+        && e.publicKey.kty === "OKP" && e.publicKey.crv === "Ed25519" && typeof e.publicKey.x === "string")
+      .slice(0, 8);
+  }
+
+  /** All keys that may verify this principal's messages: current first, then retired, newest first. */
+  getVerificationKeys(principalId) {
+    this._refresh();
+    const rec = this._principals.get(String(principalId || "").trim());
+    if (!rec) return [];
+    const keys = [];
+    if (rec.publicKey) keys.push(rec.publicKey);
+    for (const e of AuthStore.validHistoricalKeys(rec.historicalKeys)) keys.push(e.publicKey);
+    return keys;
   }
 
   /** Register or rotate a principal's token. Control-plane only (the `bridge register` CLI), never an
@@ -119,7 +147,21 @@ export class AuthStore {
     const kp = generateKeyPairSync("ed25519");
     const publicKey = kp.publicKey.export({ format: "jwk" });   // { kty, crv, x }
     const privateKey = kp.privateKey.export({ format: "jwk" }); // { kty, crv, x, d }
-    current[id] = { tokenHash: hashToken(token, salt), salt, scopes: normalizeScopes(scopes), publicKey, createdAt: Date.now() };
+    // Rotation survival: the replaced key retires into historicalKeys (bounded) instead of
+    // vanishing — otherwise every message signed before this rotation fails verification and
+    // the evidence trail rewrites itself on every re-registration.
+    const previousKeys = AuthStore.validHistoricalKeys(current[id]?.historicalKeys);
+    if (current[id]?.publicKey && typeof current[id].publicKey === "object") {
+      previousKeys.unshift({ publicKey: current[id].publicKey, rotatedAt: Date.now() });
+    }
+    current[id] = {
+      tokenHash: hashToken(token, salt),
+      salt,
+      scopes: normalizeScopes(scopes),
+      publicKey,
+      ...(previousKeys.length > 0 ? { historicalKeys: previousKeys.slice(0, 8) } : {}),
+      createdAt: Date.now(),
+    };
     const tmp = `${this.file}.${randomBytes(6).toString("hex")}.tmp`;
     await fsp.writeFile(tmp, JSON.stringify(current, null, 2), { encoding: "utf8", mode: 0o600 });
     await fsp.rename(tmp, this.file);
