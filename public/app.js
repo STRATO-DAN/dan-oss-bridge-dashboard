@@ -373,16 +373,26 @@ async function join() {
   refreshChannels();
 }
 
+let sending = false;
 async function send() {
   const input = $("composeInput");
   const text = input.value.trim();
-  if (!text || !channel) return;
-  input.value = "";
-  let body;
-  try { body = await signBody(channel, text); }
-  catch { setStatus($("joinStatus"), "err", "Could not sign the message — re-join with a valid signing key."); return; }
-  const { status, data } = await postJson(`/api/channels/${encodeURIComponent(channel)}/messages`, body);
-  if (!data.ok) setStatus($("joinStatus"), "err", authError(status, data));
+  if (!text || !channel || sending) return;
+  const draft = input.value;
+  const destination = channel;
+  sending = true;
+  $("sendBtn").disabled = true;
+  try {
+    const body = await signBody(destination, text);
+    const { status, data } = await postJson(`/api/channels/${encodeURIComponent(destination)}/messages`, body);
+    if (!data.ok) setStatus($("joinStatus"), "err", authError(status, data));
+    else if (input.value === draft && channel === destination) input.value = "";
+  } catch {
+    setStatus($("joinStatus"), "err", "Send not confirmed. Draft retained; check history before retrying to avoid duplicates.");
+  } finally {
+    sending = false;
+    $("sendBtn").disabled = false;
+  }
 }
 
 function bindVerifyButton() {

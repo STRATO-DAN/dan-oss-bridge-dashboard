@@ -9,6 +9,28 @@ import path from "node:path";
 import { BridgeStore, BridgeError } from "../src/store.js";
 
 let _n = 0;
+
+test("corrupt replay state fails closed and releases the startup lock", () => withStore(async (store, dir) => {
+  await store.postMessage("general", "a", "hello", { nonce: "replay-state-test" });
+  await store.close();
+  await fs.writeFile(path.join(dir, "nonces.json"), "{");
+  await assert.rejects(new BridgeStore(dir).init(), { code: "STATE_INVALID" });
+  await assert.rejects(fs.stat(path.join(dir, "hub.lock")), { code: "ENOENT" });
+}));
+
+test("failed persistence cannot leak a message or accept subsequent writes", () => withStore(async (store, dir) => {
+  await fs.mkdir(path.join(dir, "nonces.json"));
+  await assert.rejects(store.postMessage("general", "a", "not committed", { nonce: "failed-write" }));
+  assert.equal(store.readMessages("general", 0).messages.length, 0);
+  await assert.rejects(store.postMessage("general", "a", "second", { nonce: "next-write" }), { code: "STORE_UNAVAILABLE" });
+}));
+
+test("returned messages cannot mutate internal history", () => withStore(async (store) => {
+  const posted = await store.postMessage("general", "a", "original", { nonce: "copy-test" });
+  posted.text = "changed";
+  store.readMessages("general", 0).messages[0].text = "also changed";
+  assert.equal(store.readMessages("general", 0).messages[0].text, "original");
+}));
 const nonce = () => `nonce-${++_n}`;
 
 async function withStore(fn, opts) {
