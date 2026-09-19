@@ -83,3 +83,13 @@ test("write failures are SURFACED (writeFailures + lastError), never silently sw
     assert.equal(audit.writeFailures, 1, "a failed audit write is counted, not dropped");
     assert.ok(audit.lastError, "the error is retained for inspection");
   }));
+
+test("drain() waits for a record() the caller never awaited — the fire-and-forget teardown race", () =>
+  withDir(async (dir) => {
+    const audit = new Audit(dir);
+    audit.record({ op: "message.post", result: "ok", principal: "agent-a", channel: "g", msgId: 1 }); // NOT awaited
+    await audit.drain();
+    const v = await Audit.verifyChain(path.join(dir, "audit.log"));
+    assert.equal(v.ok, true);
+    assert.equal(v.lines, 1, "the unawaited write landed before drain() resolved");
+  }));
