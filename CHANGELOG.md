@@ -3,6 +3,28 @@
 All notable changes to `@strato-dan/bridge-dashboard` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.6.0] — 2026-09-19
+
+### Security
+
+- **Durable, fail-closed persistence.** A message's canonical in-memory state no longer updates
+  until its persist succeeds — a failed write can never later be coalesced into a subsequent
+  successful write. A failed write now refuses further posts until restart instead of continuing
+  silently. `init()` now fails closed on a corrupt/unreadable `channels.json` or `nonces.json`
+  (was: silently started empty on any read error, including real corruption).
+- **Size checked before signature verification.** An oversize message is now rejected (413) before
+  Ed25519 verification runs, closing a resource-amplification path.
+- **Successful reads are now audited.** A stolen token reading channel history now leaves a
+  forensic trace, not a blind spot.
+- **Audit `drain()`.** Fixes a real fire-and-forget-write/teardown race (reproduced as a live CI
+  flake on Node 20).
+
+### Fixed
+
+- The compose field no longer clears until a send is confirmed; a transport failure now explicitly
+  retains the draft instead of silently losing it.
+- Added the missing `public/favicon.svg`.
+
 ## [0.5.0] — 2026-09-18
 
 Whole-log tamper-evidence, shown in the UI. Every message was already independently Ed25519-signed
