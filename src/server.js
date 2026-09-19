@@ -174,6 +174,12 @@ export function createServer(cfg = {}) {
         if (req.method === "POST") {
           const body = await readBody(req);
           if (typeof body.text !== "string" || !body.text.trim()) return sendJson(res, 400, { ok: false, reason: "text is required" });
+          // FINDING 09 fix: cheap size rejection BEFORE expensive Ed25519 verification —
+          // otherwise an oversized body always pays verify cost before its inevitable 413.
+          if (Buffer.byteLength(body.text, "utf8") > 16 * 1024) {
+            audit.record({ op: "message.post", result: "deny", principal: subject.id, channel, reason: "too_large" });
+            return sendJson(res, 413, { ok: false, reason: "message text exceeds the 16384-byte limit", code: "TOO_LARGE" });
+          }
           // Identity is server-established: a `from` that isn't the caller's own principal is a
           // spoofing attempt and is refused outright (INV-01).
           if (body.from !== undefined && String(body.from) !== subject.id) {
@@ -211,6 +217,9 @@ export function createServer(cfg = {}) {
           } else {
             result = await store.waitForMessages(channel, sinceId, 0);
           }
+          // FINDING 07 fix: successful history reads are security events — a stolen token
+          // reading history must leave forensic evidence, not a blind spot.
+          audit.record({ op: "message.read", result: "ok", principal: subject.id, channel, sinceId });
           return sendJson(res, 200, {
             ok: true,
             messages: result.messages,
