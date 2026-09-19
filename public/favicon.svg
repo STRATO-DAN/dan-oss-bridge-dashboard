@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="13" fill="#1e1e22"/>
-  <path d="M17 19 L12 19 L12 45 L17 45" fill="none" stroke="#f25b4f" stroke-width="4.5" stroke-linecap="square"/>
-  <path d="M47 19 L52 19 L52 45 L47 45" fill="none" stroke="#f25b4f" stroke-width="4.5" stroke-linecap="square"/>
-  <text x="32" y="37.25" text-anchor="middle"
-        font-family="Inter,ui-sans-serif,system-ui,-apple-system,sans-serif"
-        font-weight="800" font-size="13.75" letter-spacing="-0.25" fill="#ffffff">DAN</text>
-</svg>
