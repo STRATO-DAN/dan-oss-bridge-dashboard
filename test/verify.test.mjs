@@ -123,7 +123,11 @@ async function withServer(fn) {
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
   try { await fn(base, keys, server); }
-  finally { await new Promise((r) => server.close(r)); await fs.rm(dir, { recursive: true, force: true }); }
+  finally {
+    await new Promise((r) => server.close(r));
+    await server._bridge.audit.drain();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }
 const A = { "X-Bridge-Principal": "agent-a", "X-Bridge-Token": "tok-a" };
 function signed(keys, principal, channel, text) {

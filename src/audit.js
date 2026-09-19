@@ -62,6 +62,14 @@ export class Audit {
     return this._chain;
   }
 
+  /** Wait for every audit write queued so far to settle (success or already-handled failure). A caller
+   *  tearing down (test cleanup, graceful shutdown) should drain before removing/closing the data dir —
+   *  record() is deliberately fire-and-forget so it never blocks the request path, so nothing else
+   *  guarantees a pending write finishes before then. */
+  drain() {
+    return this._chain;
+  }
+
   async #ensureLoaded() {
     if (this._loaded) return;
     this._loaded = true;
