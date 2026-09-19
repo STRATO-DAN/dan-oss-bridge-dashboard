@@ -3,6 +3,15 @@
 All notable changes to `@strato-dan/bridge-dashboard` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.6.1] — 2026-09-19
+
+### Fixed
+
+- **Signature verification survives key rotation (Finding 03).** Re-registering a principal
+  retires its Ed25519 key into a bounded `historicalKeys` trail instead of destroying it; the
+  verify route tries current-then-retired keys, so pre-rotation messages keep verifying and
+  only messages no known key verifies count as forged. `getPublicKey()` contract unchanged.
+
 ## [0.6.0] — 2026-09-19
 
 ### Security
