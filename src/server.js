@@ -248,10 +248,18 @@ export function createServer(cfg = {}) {
         const { chainPresent, firstBreakId, verdicts } = verifyChain(msgs);
         let sigForged = 0, sigUnverifiable = 0;
         const records = msgs.map((m, i) => {
-          const publicKey = auth.getPublicKey(m.from);
+          // Rotation-aware verification: current key first, then retired keys newest-first. A
+          // message signed before a re-registration verifies against the key it was actually
+          // signed with; only a message no known key verifies counts as forged.
+          const keys = auth.getVerificationKeys(m.from);
           // A message whose sender has no registered key can't be authenticated by this hub — report it
           // honestly as unverifiable rather than silently "ok" or falsely "forged".
-          const sigVerified = publicKey ? verifyMessage(m, channel, publicKey) : null;
+          let sigVerified = null;
+          for (const k of keys) {
+            // verifyMessage is fail-closed (false, never throws); first verifying key wins.
+            if (verifyMessage(m, channel, k) === true) { sigVerified = true; break; }
+            sigVerified = false;
+          }
           if (sigVerified === false) sigForged++;
           else if (sigVerified === null) sigUnverifiable++;
           return { id: m.id, from: m.from, ts: m.ts, sigVerified, chainOk: verdicts[i].chainOk };
