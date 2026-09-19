@@ -44,10 +44,12 @@ export class BridgeStore {
     this._nonces = new Map(); // nonce -> expiry ts (global; nonces are unique per post)
     this._holdsLock = false;
     this._persistTail = Promise.resolve(); // serializes the durable write path (one persist at a time, in order)
+    this._postTail = Promise.resolve();
+    this._writeFailed = false;
   }
 
   async init() {
-    await fs.mkdir(this.dataDir, { recursive: true });
+    await fs.mkdir(this.dataDir, { recursive: true, mode: 0o700 });
     await this.#acquireLock();
     try {
       const raw = JSON.parse(await fs.readFile(this.file, "utf8"));
@@ -61,9 +63,11 @@ export class BridgeStore {
           : (messages.length ? Number(messages[0].id) || 0 : 0);
         this.channels.set(name, { messages, seq, minRetainedId, presence: new Map() });
       }
-    } catch {
-      // No saved state yet (or unreadable) — start empty rather than fail. A corrupt file does not
-      // grant anyone authority; identity/authz live in principals.json, checked by the server.
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        await this.#releaseLock();
+        throw new BridgeError("STATE_INVALID", "Cannot read channel state; preserve files and restore from a trusted backup");
+      }
     }
     // Restore the used-nonce set so replay protection SURVIVES a restart. Before this, `_nonces` was
     // purely in-memory: after a bounce, a message captured within the freshness window (ts-skew) could be
@@ -72,17 +76,23 @@ export class BridgeStore {
     try {
       const now = Date.now();
       const saved = JSON.parse(await fs.readFile(this.nonceFile, "utf8"));
+      if (!Array.isArray(saved) || saved.some(entry => !Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || !Number.isFinite(entry[1]))) {
+        throw new Error("Invalid nonce state");
+      }
       if (Array.isArray(saved)) {
         for (const [nonce, exp] of saved) {
           if (typeof nonce === "string" && Number.isFinite(exp) && exp > now) this._nonces.set(nonce, exp);
         }
       }
-    } catch {
-      /* no saved nonces yet (or unreadable) — start with an empty set */
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        await this.#releaseLock();
+        throw new BridgeError("STATE_INVALID", "Replay state is missing or invalid; refusing to reset replay protection");
+      }
     }
   }
 
-  async close() { await this.#releaseLock(); }
+  async close() { await this._postTail; await this.#releaseLock(); }
 
   // ── single-writer hub lock ────────────────────────────────────────────────────────────────────
   // Two hub processes on one data dir would each hold the whole store in memory and last-writer-wins
@@ -133,22 +143,22 @@ export class BridgeStore {
     return this._persistTail;
   }
 
-  async #persist() {
+  async #persist(channels = this.channels, nonces = this._nonces) {
     // Persist the nonce set BEFORE the channel state: a message is only durable once its nonce is already
     // recorded, so a crash between the two renames can at worst lose an un-acked message — never leave a
     // durable message whose nonce was never written (which would let it be replayed after a restart).
-    await this.#persistNonces();
+    await this.#persistNonces(nonces);
     const plain = {};
-    for (const [name, ch] of this.channels) plain[name] = { messages: ch.messages, seq: ch.seq, minRetainedId: ch.minRetainedId };
+    for (const [name, ch] of channels) plain[name] = { messages: ch.messages, seq: ch.seq, minRetainedId: ch.minRetainedId };
     await this.#atomicWrite(this.file, JSON.stringify(plain));
   }
 
   // Persist the still-live used-nonce set (expired entries dropped) so replay protection survives a
   // restart. Atomic write-then-rename, same as channels.json.
-  async #persistNonces() {
+  async #persistNonces(nonces = this._nonces) {
     const now = Date.now();
     const live = [];
-    for (const [nonce, exp] of this._nonces) if (exp > now) live.push([nonce, exp]);
+    for (const [nonce, exp] of nonces) if (exp > now) live.push([nonce, exp]);
     await this.#atomicWrite(this.nonceFile, JSON.stringify(live));
   }
 
@@ -202,6 +212,14 @@ export class BridgeStore {
    *  unique `nonce` and rejects a replayed one; rejects a client `ts` outside the allowed skew. The id
    *  is a durable per-channel sequence, so it is monotonic and never reused across retention/restart. */
   async postMessage(channelName, from, text, { nonce, ts, sig } = {}) {
+    const run = () => this.#postMessage(channelName, from, text, { nonce, ts, sig });
+    const result = this._postTail.then(run);
+    this._postTail = result.catch(() => {});
+    return result;
+  }
+
+  async #postMessage(channelName, from, text, { nonce, ts, sig }) {
+    if (this._writeFailed) throw new BridgeError("STORE_UNAVAILABLE", "A storage write failed; restart and inspect persisted state before retrying");
     const now = Date.now();
     if (!nonce || typeof nonce !== "string" || nonce.length > 128) {
       throw new BridgeError("NONCE_REQUIRED", "a unique `nonce` is required (replay protection)");
@@ -225,7 +243,9 @@ export class BridgeStore {
     const seen = this._nonces.get(nonce);
     if (seen && seen > now) throw new BridgeError("REPLAY", "duplicate/replayed message (nonce already used)");
 
-    const ch = this.#channel(channelName);
+    const existing = this.#channel(channelName, { create: false });
+    if (!existing && this.channels.size >= MAX_CHANNELS) throw new BridgeError("TOO_MANY_CHANNELS", "Channel limit reached");
+    const ch = existing ? { ...existing, messages: [...existing.messages] } : { messages: [], seq: 0, minRetainedId: 0, presence: new Map() };
     // Hash-chain link: this message commits to the one before it, so a later `verify` can prove no
     // message was deleted, reordered, or inserted (see chain.js). The very first message in a channel
     // anchors to GENESIS; every later one carries the link of the current last message. Computed here
@@ -237,10 +257,16 @@ export class BridgeStore {
       ch.messages.splice(0, ch.messages.length - this.maxMessages);
     }
     ch.minRetainedId = ch.messages.length ? ch.messages[0].id : ch.seq;
-    this._nonces.set(nonce, now + NONCE_TTL_MS);
-    await this.#enqueuePersist(); // serialized durable write — resolves only once THIS post is on disk
-    this.events.emit(channelName, message);
-    return message;
+    const nonces = new Map(this._nonces);
+    nonces.set(nonce, now + NONCE_TTL_MS);
+    const channels = new Map(this.channels);
+    channels.set(channelName, ch);
+    try { await this.#persist(channels, nonces); }
+    catch (err) { this._writeFailed = true; throw err; }
+    this.channels.set(channelName, ch);
+    this._nonces = nonces;
+    this.events.emit(channelName, structuredClone(message));
+    return structuredClone(message);
   }
 
   /** Read messages after `sinceId`, WITH honest history-gap reporting. If the caller's cursor points
@@ -252,7 +278,7 @@ export class BridgeStore {
     const since = Number(sinceId) || 0;
     const gap = since > 0 && since < ch.minRetainedId;
     return {
-      messages: ch.messages.filter((m) => m.id > since),
+      messages: structuredClone(ch.messages.filter((m) => m.id > since)),
       gap,
       minRetainedId: ch.minRetainedId,
       latestId: ch.seq,
