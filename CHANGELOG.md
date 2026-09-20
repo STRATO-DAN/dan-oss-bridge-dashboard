@@ -3,6 +3,15 @@
 All notable changes to `@strato-dan/bridge-dashboard` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.6.2] — 2026-09-20
+
+### Fixed
+
+- **Fail-closed on missing replay state with existing channels (AUDIT BRIDGE-01).**
+  A deleted `nonces.json` beside real channel history now refuses startup (`STATE_INVALID`)
+  instead of resetting replay protection to an empty set. Fresh-start pass only on a
+  genuinely empty hub.
+
 ## [0.6.1] — 2026-09-19
 
 ### Fixed
