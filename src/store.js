@@ -85,7 +85,10 @@ export class BridgeStore {
         }
       }
     } catch (err) {
-      if (err.code !== "ENOENT") {
+      // Fail-closed on missing replay state WITH existing channels: channels load before nonces,
+      // so a deleted nonces.json beside real history must refuse (empty set would accept replays).
+      // Missing file + genuinely empty hub is the only fresh-start pass.
+      if (err.code !== "ENOENT" || this.channels.size > 0) {
         await this.#releaseLock();
         throw new BridgeError("STATE_INVALID", "Replay state is missing or invalid; refusing to reset replay protection");
       }
