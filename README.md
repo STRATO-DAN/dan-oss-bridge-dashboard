@@ -257,12 +257,12 @@ Everything here was run locally against this exact code on Node 22 (supported: N
 $ npm test
 > node --test test/*.test.mjs
 ...
-# tests 30
-# pass 30
+# tests 77
+# pass 77
 # fail 0
 ```
 
-**30 / 30 pass.** Beyond the behavioral tests (durable per-channel ids, the `EventEmitter`-backed
+**77 / 77 pass.** Beyond the behavioral tests (durable per-channel ids, the `EventEmitter`-backed
 long-poll resolving the instant a message posts, presence, restart persistence) they assert the
 security invariants directly — including the review's five "breaking tests": a caller cannot claim
 another principal's identity (spoofed `from` → `403`); an unauthenticated post is denied (`401`) and
